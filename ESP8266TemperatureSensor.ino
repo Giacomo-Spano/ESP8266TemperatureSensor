@@ -8,7 +8,7 @@
 #include "EEPROMAnything.h"
 #include "user_interface.h"
 
-#define Versione "1.02"
+#define Versione "1.02 xxxxx"
 
 unsigned long lastSendTemperature = 0;
 const unsigned int sendTemperature_interval = 5000;
