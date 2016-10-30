@@ -8,7 +8,11 @@
 #include "EEPROMAnything.h"
 #include "user_interface.h"
 
-#define Versione "1.02 xxxxx"
+#define Versione "1.02"
+
+uint8_t MAC_array[6];
+char MAC_char[18];
+
 
 unsigned long lastSendTemperature = 0;
 const unsigned int sendTemperature_interval = 5000;
@@ -68,7 +72,7 @@ byte id = 0;
 int localPort = 80;
 const int servernamelen = 30;
 char servername[servernamelen];
-int serverPort = 90;
+int serverPort = 8080;
 const int boardnamelen = 30;
 char boardname[boardnamelen];
 
@@ -195,10 +199,11 @@ boolean sendStatus(float temperature)
 {
 	Serial.println(F("sendStatus"));
 
-	char   buffer[100];
-	sprintf(buffer, "{\"id\":%d,\"avtemperature\":%d.%02d,\"temperature\":%d.%02d}", (int)id, (int)temperature, (int)(temperature * 100.0) % 100, (int)temperature, (int)(temperature * 100.0) % 100);
-
-	post(servername, 8080, "/webduino/sensor", buffer);
+	char   buffer[150];
+	//int len = sprintf(buffer, "{\"id\":%d,\"avtemperature\":%d.%02d,\"temperature\":%d.%02d }\n", (int)id, (int)temperature, (int)(temperature * 100.0) % 100, (int)temperature, (int)(temperature * 100.0) % 100);
+	int len = sprintf(buffer, "{\"id\":%d,\"temperature\":%d.%02d,\"avtemperature\":%d.%02d,\"MAC\":\"%s\",\"name\":\"%s\"}", (int)id, (int)localTemperature, (int)(localTemperature * 100.0) % 100, (int)localAvTemperature, (int)(localAvTemperature * 100.0) % 100, MAC_char, boardname);
+	
+	post(servername, serverPort/*8080*/, "/webduino/sensor", buffer, len);
 	return true;
 }
 
@@ -274,11 +279,23 @@ void setup() {
 	Serial.println("");
 	Serial.println("");
 	Serial.println("");
-	Serial.print("Restarting.... 1.01");
+	Serial.print("starting.... ");
 
 	String str = "Versione ";
 	str += Versione;
 	Serial.print(str);
+
+	// get MAC Address
+	Serial.println("");
+	Serial.print("MAC Address ");
+	WiFi.macAddress(MAC_array);
+	for (int i = 0; i < sizeof(MAC_array); ++i) {
+		if (i > 0) sprintf(MAC_char, "%s:", MAC_char);
+		sprintf(MAC_char, "%s%02x", MAC_char, MAC_array[i]);
+		
+	}
+	Serial.println(MAC_char);
+
 
 	initEPROM();
 
@@ -464,6 +481,8 @@ void loop() {
 						showwol(parambuffer);*/
 						else if (strcmp(buffer, "status") == 0)
 							getStatus(parambuffer);
+						else if (strcmp(buffer, "poststatus") == 0)
+							postStatus(parambuffer);
 						/*else
 						unknownPage(buffer);*/
 					}
@@ -516,15 +535,12 @@ void callServer() {
 	Serial.println("closing connection");
 }
 
-bool post(char* host, int port, char* path, char* param)
+bool post(char* host, int port, char* path, char* param, int len)
 {
 	// Use WiFiClient class to create TCP connections
 	WiFiClient postClient;
 
 	String data;
-	//data += "";
-	//data += param;
-
 	Serial.println(F("post notification"));
 	Serial.println(host);
 	Serial.println(port);
@@ -543,13 +559,14 @@ bool post(char* host, int port, char* path, char* param)
 		data += "\r\nContent-Type: application/x-www-form-urlencoded\r\n";
 		data += "Connection: close\r\n";
 		data += "Content-Length: ";
-		data += data.length();
+		data += len;
 		data += "\r\n\r\n";
 		data += param;
 		data += "\r\n";
 
 		client.print(data);
 		Serial.println(F("post data sent"));
+		Serial.println(data);
 
 		delay(1000);
 
@@ -561,6 +578,7 @@ bool post(char* host, int port, char* path, char* param)
 		}
 		Serial.println();
 		Serial.println("closing connection");
+		//delay(1000);
 
 	}
 	else {
@@ -644,11 +662,21 @@ void showMain(boolean isPost, char* param)
 
 	// sendbutton
 	data += F("<tr><td>WOL</td><td><form action='/wol' method='POST'><input type='submit' value='send'></form></td><tr>");
+	
+	// send temperature update
+	data += F("<tr><td>temperature</td><td><form action='/poststatus' method='POST'><input type='submit' value='send'></form></td><tr>");
+	
 	data += F("</table><font color='#53669E' face='Verdana' size='2'><b>Impostazioni </b></font>\r\n<form action='/chstt' method='POST'><table width='80%' border='1'><colgroup bgcolor='#B6C4E9' width='20%' align='left'></colgroup><colgroup bgcolor='#FFFFFF' width='30%' align='left'></colgroup>");
 	// id
 	data += F("<tr><td>ID</td><td><input type='num' name='id' value='");
 	data += id;
 	data += F("' size='2' maxlength='2'> </td></tr>");
+
+	// MAC
+	data += F("<tr><td>MAC address</td><td>");
+	data += String(MAC_char);
+	data += F("</td></tr>");
+	
 	// local port
 	data += F("<tr><td>Local port</td><td><input type='num' name='localport");
 	data += F("' value='");
@@ -699,6 +727,56 @@ void showMain(boolean isPost, char* param)
 
 }
 
+void postStatus(char* param)
+{
+	Serial.println(F("post Status"));
+
+	sendStatus(getAverageTemperature());
+
+	String data;
+	data += "";
+	data += F("HTTP/1.1 200 OK\r\nContent-Type: text/html\n\n<html><head><meta HTTP-EQUIV='REFRESH' content='0; url=/main'><title>Timer</title></head><body></body></html>");
+	client.print(data);
+	client.stop();
+
+}
+
+
+void replaceEncodedSlash(char* source, char* dest) {
+	
+	char *ptr, *ptrdest;
+	ptr = source;
+	ptrdest = dest;
+
+	Serial.print("source=");
+	Serial.println(source);
+
+	while (ptr != NULL && *ptr != '\0')  {
+
+		if (*ptr == '%') {
+			ptr++;
+			if (ptr != NULL && *ptr != '\0' && *ptr == '2')  {
+				ptr++;
+				if (ptr != NULL && *ptr != '\0' && *ptr == 'F')  {
+
+					*ptrdest = '/';
+					ptrdest++;
+					ptr++;
+				}
+				else
+					ptr -= 2;
+			}
+			else
+				ptr--;
+		}
+
+		*ptrdest = *ptr;
+		ptrdest++;
+		ptr++;
+	}
+	*ptrdest = '\0';
+}
+
 void showChangeSettings(char* GETparam) {
 
 	Serial.println(F("showChangeSettings "));
@@ -724,9 +802,13 @@ void showChangeSettings(char* GETparam) {
 	//Serial.println(networkPassword);
 	// server name
 	val = parsePostdata(databuff, "servername", posdata);
+	/*char tempbuffer[servernamelen];
+	memccpy_P(tempbuffer, posdata, '\0', servernamelen);
+	replaceEncodedSlash(tempbuffer,servername);*/
 	memccpy_P(servername, posdata, '\0', servernamelen);
 	Serial.print("servername=");
 	Serial.println(servername);
+
 	// server port
 	val = parsePostdata(databuff, "serverport", posdata);
 	serverPort = val;
